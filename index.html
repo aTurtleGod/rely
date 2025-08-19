@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Mic to Speaker Audio Router</title>
+  <style>
+    body { font-family: sans-serif; margin: 2em; background: #f0f0f0; }
+    label, select, button { margin: .5em 0; }
+    #status { margin: 1em 0; }
+  </style>
+</head>
+<body>
+  <h2>Mic to Speaker Router</h2>
+
+  <label for="micSelect">Microphone:</label>
+  <select id="micSelect"></select><br>
+
+  <label for="speakerSelect">Speaker/Output:</label>
+  <select id="speakerSelect"></select><br>
+
+  <button id="startBtn">Start Monitoring</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <div id="status"></div>
+
+  <script>
+    // Elements
+    const micSelect = document.getElementById('micSelect');
+    const speakerSelect = document.getElementById('speakerSelect');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const status = document.getElementById('status');
+
+    let audioStream = null;       // Holds mic stream
+    let audioContext = null;      // WebAudio context
+    let sourceNode = null;        // Source mic node
+    let destNode = null;          // Destination node
+    let audioElem = null;         // <audio> element for playback
+
+    // Request device permissions & populate device lists
+    async function enumerateDevices() {
+      try {
+        // Request access to any mic to get permission (required for device labels)
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+
+        // List mics
+        micSelect.innerHTML = '';
+        devices.filter(d => d.kind === 'audioinput').forEach(device => {
+          const option = document.createElement('option');
+          option.value = device.deviceId;
+          option.text = device.label || `Microphone (${micSelect.length + 1})`;
+          micSelect.appendChild(option);
+        });
+
+        // List speakers
+        speakerSelect.innerHTML = '';
+        devices.filter(d => d.kind === 'audiooutput').forEach(device => {
+          const option = document.createElement('option');
+          option.value = device.deviceId;
+          option.text = device.label || `Speaker (${speakerSelect.length + 1})`;
+          speakerSelect.appendChild(option);
+        });
+      } catch (err) {
+        status.textContent = "Error enumerating devices: " + err;
+      }
+    }
+
+    // Start piping mic audio to chosen speaker
+    async function startMonitoring() {
+      // Cleanup old stream if needed
+      stopMonitoring();
+
+      const micId = micSelect.value;
+      const speakerId = speakerSelect.value;
+
+      try {
+        // Request specific mic
+        audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: micId ? { exact: micId } : undefined }
+        });
+
+        // Create audio context and nodes
+        audioContext = new AudioContext();
+        sourceNode = audioContext.createMediaStreamSource(audioStream);
+
+        // To play through specific speaker, must use HTMLAudioElement
+        destNode = audioContext.createMediaStreamDestination();
+        sourceNode.connect(destNode);
+
+        audioElem = new Audio();
+        audioElem.srcObject = destNode.stream;
+        audioElem.autoplay = true;
+        audioElem.muted = false;
+        // Set speaker/output if supported
+        if (typeof audioElem.setSinkId === 'function') {
+          await audioElem.setSinkId(speakerId);
+          status.textContent = "Mic audio is playing to selected speaker.";
+        } else {
+          status.textContent = "setSinkId() not supported by your browser. Select output device on Chrome/Edge only.";
+        }
+
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+      } catch (err) {
+        status.textContent = "Error: " + err;
+        stopMonitoring();
+      }
+    }
+
+    // Stop monitoring
+    function stopMonitoring() {
+      if (audioElem) {
+        audioElem.pause();
+        audioElem.srcObject = null;
+        audioElem = null;
+      }
+      if (sourceNode) sourceNode.disconnect();
+      if (audioContext) audioContext.close();
+      sourceNode = null;
+      destNode = null;
+      audioContext = null;
+      if (audioStream) {
+        audioStream.getTracks().forEach(track => track.stop());
+        audioStream = null;
+      }
+      status.textContent = "";
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    }
+
+    // Update device lists if plug/unplug
+    navigator.mediaDevices.addEventListener('devicechange', enumerateDevices);
+
+    // UI events
+    startBtn.onclick = startMonitoring;
+    stopBtn.onclick = stopMonitoring;
+
+    // Initial device list
+    enumerateDevices();
+  </script>
+</body>
+</html>
